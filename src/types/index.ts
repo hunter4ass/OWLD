@@ -1,10 +1,10 @@
 export interface Product {
-  id: string;
+  id: number;
   name: string;
-  price: number;
-  image: string;
-  category: string;
   description: string;
+  image: string;
+  price: number;
+  category: string;
   inStock: boolean;
 }
 
@@ -18,13 +18,20 @@ export interface User {
   email: string;
 }
 
+export interface CustomerInfo {
+  name: string;
+  phone: string;
+  address: string;
+  paymentMethod: 'cash' | 'card';
+}
+
 export interface Order {
   id: string;
+  userId: string;
   items: CartItem[];
   total: number;
-  status: 'preparing' | 'collecting' | 'delivering' | 'delivered';
-  createdAt: Date;
-  deliveryAddress: string;
-  customerName: string;
-  customerPhone: string;
+  status: "pending" | "preparing" | "collecting" | "delivering" | "delivered";
+  createdAt: string;
+  estimatedDelivery: string;
+  customerInfo: CustomerInfo;
 }

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { X, User, Mail, Phone, MapPin, Package, Clock, Eye, History, LogOut } from 'lucide-react';
+import { X, User, Mail, Phone, MapPin, Package, Clock, Eye, History, LogOut, Edit3, Repeat, Save } from 'lucide-react';
 import { User as UserType, Order } from '../types';
+import { ValidationUtils } from '../utils/validation';
+import { UserService } from '../services/userService';
 
 interface UserProfileProps {
   user: UserType;
@@ -9,6 +11,9 @@ interface UserProfileProps {
   onClose: () => void;
   onTrackOrder: (order: Order) => void;
   onLogout: () => void;
+  onEditOrder: (order: Order) => void;
+  onReorder: (order: Order) => void;
+  onUserUpdated: (user: UserType) => void;
 }
 
 const UserProfile: React.FC<UserProfileProps> = ({
@@ -18,9 +23,22 @@ const UserProfile: React.FC<UserProfileProps> = ({
   onClose,
   onTrackOrder,
   onLogout,
+  onEditOrder,
+  onReorder,
+  onUserUpdated,
 }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'orders' | 'current'>('profile');
+  const [activeTab, setActiveTab] = useState<'active' | 'history' | 'profile' | 'current'>('active');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    name: user.name || '',
+    email: user.email || '',
+  });
+  const [profileErrors, setProfileErrors] = useState({
+    name: '',
+    email: '',
+  });
+  const [savingProfile, setSavingProfile] = useState(false);
 
   const getStatusColor = (status: Order['status']) => {
     switch (status) {
@@ -52,7 +70,14 @@ const UserProfile: React.FC<UserProfileProps> = ({
     }
   };
 
-  const formatDate = (date: Date) => {
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    
+    // Проверяем, что дата валидна
+    if (isNaN(date.getTime())) {
+      return 'Неизвестная дата';
+    }
+    
     return new Intl.DateTimeFormat('ru-RU', {
       day: '2-digit',
       month: '2-digit',
@@ -61,6 +86,57 @@ const UserProfile: React.FC<UserProfileProps> = ({
       minute: '2-digit',
     }).format(date);
   };
+
+  const handleProfileChange = (field: 'name' | 'email', value: string) => {
+    setProfileForm(prev => ({ ...prev, [field]: value }));
+    let validation: { isValid: boolean; message: string };
+    switch (field) {
+      case 'name':
+        validation = ValidationUtils.validateName(value);
+        setProfileErrors(prev => ({ ...prev, name: validation.isValid ? '' : validation.message }));
+        break;
+      case 'email': {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const isValidEmail = emailRegex.test(value);
+        setProfileErrors(prev => ({ ...prev, email: isValidEmail || !value ? '' : 'Введите корректный email' }));
+        break;
+      }
+        break;
+    }
+  };
+
+  const isProfileValid = () => {
+    return (
+      profileForm.name.trim() !== '' &&
+      profileForm.email.trim() !== '' &&
+      !profileErrors.name &&
+      !profileErrors.email
+    );
+  };
+
+  const saveProfile = async () => {
+    if (!isProfileValid()) return;
+    setSavingProfile(true);
+    try {
+      // сохраняем расширенные данные в Firestore (если онлайн)
+      await UserService.updateUser(user.id, {
+        name: profileForm.name,
+        email: profileForm.email,
+      });
+    } catch {
+      // игнорируем оффлайн ошибки — локально все равно обновим имя
+    }
+    // обновляем краткие данные пользователя в состоянии приложения
+    const updatedUser: UserType = { ...user, name: profileForm.name, email: profileForm.email };
+    onUserUpdated(updatedUser);
+    setIsEditingProfile(false);
+    setSavingProfile(false);
+  };
+
+  const activeOrders = orderHistory.filter(o => o.status !== 'delivered');
+  const historyOrders = orderHistory;
+
+  const canEdit = (status: Order['status']) => status === 'pending' || status === 'preparing';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
@@ -87,6 +163,28 @@ const UserProfile: React.FC<UserProfileProps> = ({
         {/* Tabs */}
         <div className="flex border-b border-gray-700">
           <button
+            onClick={() => setActiveTab('active')}
+            className={`flex-1 px-6 py-4 font-medium transition-colors ${
+              activeTab === 'active'
+                ? 'text-purple-400 border-b-2 border-purple-400 bg-gray-800/50'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <Package className="w-5 h-5 inline mr-2" />
+            Активные заказы
+          </button>
+          <button
+            onClick={() => setActiveTab('history')}
+            className={`flex-1 px-6 py-4 font-medium transition-colors ${
+              activeTab === 'history'
+                ? 'text-purple-400 border-b-2 border-purple-400 bg-gray-800/50'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <History className="w-5 h-5 inline mr-2" />
+            История заказов
+          </button>
+          <button
             onClick={() => setActiveTab('profile')}
             className={`flex-1 px-6 py-4 font-medium transition-colors ${
               activeTab === 'profile'
@@ -97,17 +195,6 @@ const UserProfile: React.FC<UserProfileProps> = ({
             <User className="w-5 h-5 inline mr-2" />
             Профиль
           </button>
-          <button
-            onClick={() => setActiveTab('orders')}
-            className={`flex-1 px-6 py-4 font-medium transition-colors ${
-              activeTab === 'orders'
-                ? 'text-purple-400 border-b-2 border-purple-400 bg-gray-800/50'
-                : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            <History className="w-5 h-5 inline mr-2" />
-            История заказов
-          </button>
           {currentOrder && (
             <button
               onClick={() => setActiveTab('current')}
@@ -117,7 +204,7 @@ const UserProfile: React.FC<UserProfileProps> = ({
                   : 'text-gray-400 hover:text-white'
               }`}
             >
-              <Package className="w-5 h-5 inline mr-2" />
+              <Clock className="w-5 h-5 inline mr-2" />
               Текущий заказ
             </button>
           )}
@@ -130,22 +217,91 @@ const UserProfile: React.FC<UserProfileProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700/50">
                   <h3 className="text-lg font-semibold text-white mb-4">Личная информация</h3>
-                  <div className="space-y-4">
-                    <div className="flex items-center space-x-3">
-                      <User className="w-5 h-5 text-purple-400" />
-                      <div>
-                        <p className="text-sm text-gray-400">Имя</p>
-                        <p className="text-white font-medium">{user.name}</p>
+                  {!isEditingProfile ? (
+                    <div className="space-y-4">
+                      <div className="flex items-center space-x-3">
+                        <User className="w-5 h-5 text-purple-400" />
+                        <div>
+                          <p className="text-sm text-gray-400">Имя</p>
+                          <p className="text-white font-medium">{user.name}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        <Mail className="w-5 h-5 text-purple-400" />
+                        <div>
+                          <p className="text-sm text-gray-400">Email</p>
+                          <p className="text-white font-medium">{user.email}</p>
+                        </div>
+                      </div>
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => setIsEditingProfile(true)}
+                          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors flex items-center space-x-2"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                          <span>Редактировать</span>
+                        </button>
                       </div>
                     </div>
-                    <div className="flex items-center space-x-3">
-                      <Mail className="w-5 h-5 text-purple-400" />
+                  ) : (
+                    <div className="space-y-4">
                       <div>
-                        <p className="text-sm text-gray-400">Email</p>
-                        <p className="text-white font-medium">{user.email}</p>
+                        <label className="block text-sm font-medium text-gray-300 mb-2">Имя</label>
+                        <input
+                          type="text"
+                          value={profileForm.name}
+                          onChange={(e) => handleProfileChange('name', e.target.value)}
+                          className={`w-full px-4 py-2 bg-gray-800 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-white ${
+                            profileErrors.name ? 'border-red-500' : 'border-gray-600'
+                          }`}
+                          placeholder="Ваше имя"
+                        />
+                        {profileErrors.name && (
+                          <p className="text-red-400 text-xs mt-1">{profileErrors.name}</p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-300 mb-2">Email</label>
+                        <input
+                          type="email"
+                          value={profileForm.email}
+                          onChange={(e) => handleProfileChange('email', e.target.value)}
+                          className={`w-full px-4 py-2 bg-gray-800 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-white ${
+                            profileErrors.email ? 'border-red-500' : 'border-gray-600'
+                          }`}
+                          placeholder="example@email.com"
+                        />
+                        {profileErrors.email && (
+                          <p className="text-red-400 text-xs mt-1">{profileErrors.email}</p>
+                        )}
+                      </div>
+
+                      <div className="flex justify-end space-x-3">
+                        <button
+                          onClick={() => {
+                            setIsEditingProfile(false);
+                            setProfileForm({
+                              name: user.name || '',
+                              email: user.email || '',
+                            });
+                            setProfileErrors({ name: '', email: '' });
+                          }}
+                          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+                          disabled={savingProfile}
+                        >
+                          Отмена
+                        </button>
+                        <button
+                          onClick={saveProfile}
+                          disabled={savingProfile || !isProfileValid()}
+                          className="px-4 py-2 bg-gradient-to-r from-purple-600 to-orange-500 hover:from-purple-700 hover:to-orange-600 text-white rounded-lg transition-colors flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Save className="w-4 h-4" />
+                          <span>{savingProfile ? 'Сохранение...' : 'Сохранить'}</span>
+                        </button>
                       </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700/50">
@@ -160,10 +316,6 @@ const UserProfile: React.FC<UserProfileProps> = ({
                       <span className="text-white font-bold">
                         {orderHistory.reduce((total, order) => total + order.total, 0)} ₽
                       </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-gray-400">Статус</span>
-                      <span className="text-green-400 font-medium">Активный</span>
                     </div>
                   </div>
                 </div>
@@ -181,7 +333,71 @@ const UserProfile: React.FC<UserProfileProps> = ({
             </div>
           )}
 
-          {activeTab === 'orders' && (
+          {activeTab === 'active' && (
+            <div className="space-y-4">
+              {activeOrders.length === 0 ? (
+                <div className="text-center py-12">
+                  <Package className="w-16 h-16 text-gray-600 mx-auto mb-4" />
+                  <p className="text-gray-400">Активных заказов нет</p>
+                </div>
+              ) : (
+                activeOrders.map((order) => (
+                  <div
+                    key={order.id}
+                    className="bg-gray-800/50 rounded-xl p-6 border border-gray-700/50 hover:border-purple-500/30 transition-colors"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="text-lg font-semibold text-white">
+                          Заказ #{order.id}
+                        </h3>
+                        <p className="text-gray-400 text-sm">
+                          {formatDate(order.createdAt)}
+                        </p>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(order.status)}`}>
+                          {getStatusText(order.status)}
+                        </span>
+                        <span className="text-white font-bold text-lg">
+                          {order.total} ₽
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2 text-gray-400">
+                        <MapPin className="w-4 h-4" />
+                        <span className="text-sm">{order.customerInfo.address}</span>
+                      </div>
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={() => onTrackOrder(order)}
+                          className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-orange-500 hover:from-purple-700 hover:to-orange-600 text-white rounded-lg transition-colors"
+                        >
+                          <Package className="w-4 h-4" />
+                          <span>Отследить</span>
+                        </button>
+                        <button
+                          onClick={() => onEditOrder(order)}
+                          disabled={!canEdit(order.status)}
+                          className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
+                            canEdit(order.status)
+                              ? 'bg-gray-700 hover:bg-gray-600 text-white'
+                              : 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                          }`}
+                        >
+                          <Edit3 className="w-4 h-4" />
+                          <span>Редактировать</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {activeTab === 'history' && (
             <div className="space-y-4">
               {orderHistory.length === 0 ? (
                 <div className="text-center py-12">
@@ -216,7 +432,7 @@ const UserProfile: React.FC<UserProfileProps> = ({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-2 text-gray-400">
                         <MapPin className="w-4 h-4" />
-                        <span className="text-sm">{order.deliveryAddress}</span>
+                        <span className="text-sm">{order.customerInfo.address}</span>
                       </div>
                       <div className="flex space-x-2">
                         <button
@@ -226,15 +442,13 @@ const UserProfile: React.FC<UserProfileProps> = ({
                           <Eye className="w-4 h-4" />
                           <span>Детали</span>
                         </button>
-                        {order.status !== 'delivered' && (
-                          <button
-                            onClick={() => onTrackOrder(order)}
-                            className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-orange-500 hover:from-purple-700 hover:to-orange-600 text-white rounded-lg transition-colors"
-                          >
-                            <Package className="w-4 h-4" />
-                            <span>Отследить</span>
-                          </button>
-                        )}
+                        <button
+                          onClick={() => onReorder(order)}
+                          className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-orange-500 hover:from-purple-700 hover:to-orange-600 text-white rounded-lg transition-colors"
+                        >
+                          <Repeat className="w-4 h-4" />
+                          <span>Повторить</span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -261,15 +475,15 @@ const UserProfile: React.FC<UserProfileProps> = ({
                     <div className="space-y-2">
                       <div className="flex items-center space-x-2">
                         <User className="w-4 h-4 text-purple-400" />
-                        <span className="text-gray-300">{currentOrder.customerName}</span>
+                        <span className="text-gray-300">{currentOrder.customerInfo.name}</span>
                       </div>
                       <div className="flex items-center space-x-2">
                         <Phone className="w-4 h-4 text-purple-400" />
-                        <span className="text-gray-300">{currentOrder.customerPhone}</span>
+                        <span className="text-gray-300">{currentOrder.customerInfo.phone}</span>
                       </div>
                       <div className="flex items-center space-x-2">
                         <MapPin className="w-4 h-4 text-purple-400" />
-                        <span className="text-gray-300">{currentOrder.deliveryAddress}</span>
+                        <span className="text-gray-300">{currentOrder.customerInfo.address}</span>
                       </div>
                       <div className="flex items-center space-x-2">
                         <Clock className="w-4 h-4 text-purple-400" />
